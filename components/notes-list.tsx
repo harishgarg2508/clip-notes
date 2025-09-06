@@ -475,7 +475,6 @@ export function NotesList({ refreshTrigger }: NotesListProps) {
         onOpenChange={(open) => !open && setReminderNote(null)}
         onReminderSet={handleReminderSet}
       />
-      // Add the dialog at the end of your component
       <NoteDetailDialog
         note={selectedNote}
         open={detailDialogOpen}
