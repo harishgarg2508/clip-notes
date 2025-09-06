@@ -1,3 +1,5 @@
+import { classifyContent, type AIClassification } from "./ai-service"
+
 export interface ClipboardContent {
   type: "text" | "url" | "code" | "image" | "mixed"
   content: string
@@ -6,6 +8,10 @@ export interface ClipboardContent {
     domain?: string
     language?: string
     imageUrl?: string
+    source?: string
+    length?: number
+    size?: number
+    mimeType?: string
   }
   aiClassification?: AIClassification
 }
@@ -112,30 +118,82 @@ function detectLanguage(code: string): string {
   return "text"
 }
 
-import { classifyContent, type AIClassification } from "./ai-service"
+// Use the existing analyzeTextContent function instead of the Next.js detectContentType
+function detectContentType(text: string): ClipboardContent["type"] {
+  const analyzed = analyzeTextContent(text)
+  return analyzed.type
+}
 
-export async function processClipboardWithAI(): Promise<ClipboardContent> {
-  const clipboardContent = await readClipboardContent()
-
-  // Skip AI processing for images
-  if (clipboardContent.type === "image") {
-    return clipboardContent
-  }
-
+export async function processClipboardWithAI(directText?: string): Promise<ClipboardContent> {
   try {
-    const aiClassification = await classifyContent(clipboardContent.content, clipboardContent.type)
-
-    if (aiClassification) {
-      return {
-        ...clipboardContent,
-        aiClassification,
-        // Update content with cleaned version from AI
-        content: aiClassification.cleanedContent,
+    // If direct text is provided, use it instead of clipboard
+    if (directText) {
+      const text = directText.trim()
+      if (text) {
+        // Classify with AI
+        const aiClassification = await classifyContent(text, "text")
+        
+        return {
+          type: detectContentType(text),
+          content: text,
+          aiClassification: aiClassification || undefined,
+          metadata: {
+            source: "manual",
+            length: text.length
+          }
+        }
       }
     }
-  } catch (error) {
-    console.error("AI classification failed:", error)
-  }
 
-  return clipboardContent
+    // Original clipboard processing code
+    const clipboardItems = await navigator.clipboard.read()
+    
+    for (const item of clipboardItems) {
+      // Handle images
+      if (item.types.includes("image/png") || item.types.includes("image/jpeg")) {
+        const imageType = item.types.find(type => type.startsWith("image/"))
+        
+        if (imageType) {
+          const blob = await item.getType(imageType)
+          const url = URL.createObjectURL(blob)
+          
+          return {
+            type: "image",
+            content: url,
+            metadata: {
+              size: blob.size,
+              mimeType: imageType,
+              source: "clipboard"
+            }
+          }
+        }
+      }
+      
+      // Handle text
+      if (item.types.includes("text/plain")) {
+        const textBlob = await item.getType("text/plain")
+        const text = await textBlob.text()
+        
+        if (text.trim()) {
+          // Classify with AI
+          const aiClassification = await classifyContent(text, "text")
+          
+          return {
+            type: detectContentType(text),
+            content: text,
+            aiClassification: aiClassification || undefined,
+            metadata: {
+              source: "clipboard",
+              length: text.length
+            }
+          }
+        }
+      }
+    }
+    
+    throw new Error("Clipboard is empty")
+  } catch (error) {
+    console.error("[Debug] Clipboard processing error:", error)
+    throw error
+  }
 }

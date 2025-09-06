@@ -3,7 +3,8 @@
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
-import { Clipboard, Plus, FileText, Link, Code, ImageIcon, Loader2 } from "lucide-react"
+import { Textarea } from "@/components/ui/textarea"
+import { Clipboard, Plus, FileText, Link, Code, ImageIcon, Loader2, Save, Edit3 } from "lucide-react"
 import { toast } from "sonner"
 import { useAuth } from "@/hooks/use-auth"
 import { processClipboardWithAI } from "@/lib/clipboard"
@@ -15,9 +16,11 @@ interface PasteInterfaceProps {
 
 export function PasteInterface({ onNotePasted }: PasteInterfaceProps) {
   const [isProcessing, setIsProcessing] = useState(false)
+  const [textContent, setTextContent] = useState("")
+  const [isSaving, setIsSaving] = useState(false)
   const { user } = useAuth()
 
-  const handlePaste = async () => {
+  const handlePasteFromClipboard = async () => {
     if (!user) {
       toast.error("Please sign in to save notes")
       return
@@ -26,9 +29,56 @@ export function PasteInterface({ onNotePasted }: PasteInterfaceProps) {
     setIsProcessing(true)
 
     try {
-      const clipboardContent = await processClipboardWithAI()
+      // Get clipboard content and put it in the textarea
+      const clipboardItems = await navigator.clipboard.read()
+      
+      for (const item of clipboardItems) {
+        if (item.types.includes("text/plain")) {
+          const textBlob = await item.getType("text/plain")
+          const text = await textBlob.text()
+          
+          if (text.trim()) {
+            setTextContent(text)
+            toast.success("Content pasted! You can now edit it before saving.")
+            return
+          }
+        }
+      }
+      
+      toast.error("No text content found in clipboard")
+    } catch (error: any) {
+      console.error("[v0] Paste error:", error)
+      
+      if (error.message === "Clipboard is empty") {
+        toast.error("Clipboard is empty. Copy some content first, then try pasting again.")
+      } else if (error.message === "Clipboard API not available") {
+        toast.error("Clipboard access not available. Please paste content manually.")
+      } else {
+        toast.error("Failed to paste from clipboard. You can type directly in the text area.")
+      }
+    } finally {
+      setIsProcessing(false)
+    }
+  }
 
-      console.log("[v0] Clipboard content with AI analysis:", clipboardContent)
+  const handleSaveNote = async () => {
+    if (!user) {
+      toast.error("Please sign in to save notes")
+      return
+    }
+
+    if (!textContent.trim()) {
+      toast.error("Please enter some content before saving")
+      return
+    }
+
+    setIsSaving(true)
+
+    try {
+      // Process the text content with AI
+      const clipboardContent = await processClipboardWithAI(textContent)
+
+      console.log("[v0] Text content with AI analysis:", clipboardContent)
 
       const noteId = await saveNote(user.uid, clipboardContent)
 
@@ -37,58 +87,139 @@ export function PasteInterface({ onNotePasted }: PasteInterfaceProps) {
       const aiInfo = clipboardContent.aiClassification
       const successMessage = aiInfo
         ? `${aiInfo.category.charAt(0).toUpperCase() + aiInfo.category.slice(1)} note "${aiInfo.title}" saved!`
-        : `${clipboardContent.type.charAt(0).toUpperCase() + clipboardContent.type.slice(1)} note saved successfully!`
+        : "Note saved successfully!"
 
       toast.success(successMessage)
+
+      // Clear the textarea after successful save
+      setTextContent("")
 
       // Notify parent component that a note was pasted
       onNotePasted?.()
     } catch (error: any) {
-      console.error("[v0] Paste error:", error)
-
-      if (error.message === "Clipboard is empty") {
-        toast.error("Clipboard is empty. Copy some content first, then try pasting again.")
-      } else if (error.message === "Clipboard API not available") {
-        toast.error("Clipboard access not available. Please paste content manually.")
-      } else {
-        toast.error("Failed to save note. Please try again.")
-      }
+      console.error("[v0] Save error:", error)
+      toast.error("Failed to save note. Please try again.")
     } finally {
-      setIsProcessing(false)
+      setIsSaving(false)
+    }
+  }
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    // Save on Ctrl+Enter or Cmd+Enter
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+      e.preventDefault()
+      handleSaveNote()
     }
   }
 
   return (
     <div className="max-w-4xl mx-auto space-y-8">
-      {/* Main Paste Button */}
+      {/* Text Input Area */}
+      <Card className="border-2 border-primary/20">
+        <CardContent className="p-6">
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="font-playfair text-xl font-bold text-foreground flex items-center gap-2">
+                <Edit3 className="h-5 w-5" />
+                Write or Paste Content
+              </h2>
+              <div className="flex items-center gap-2">
+                <Button
+                  onClick={handlePasteFromClipboard}
+                  disabled={isProcessing}
+                  variant="outline"
+                  size="sm"
+                >
+                  {isProcessing ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Pasting...
+                    </>
+                  ) : (
+                    <>
+                      <Clipboard className="mr-2 h-4 w-4" />
+                      Paste from Clipboard
+                    </>
+                  )}
+                </Button>
+              </div>
+            </div>
+
+            <Textarea
+              placeholder="Type your content here or paste from clipboard using the button above..."
+              value={textContent}
+              onChange={(e) => setTextContent(e.target.value)}
+              onKeyDown={handleKeyDown}
+              className="min-h-[200px] resize-y"
+            />
+
+            <div className="flex items-center justify-between">
+              <p className="text-sm text-muted-foreground">
+                {textContent.length > 0 && (
+                  <span>{textContent.length} characters • </span>
+                )}
+                Press Ctrl+Enter to save quickly
+              </p>
+
+              <Button
+                onClick={handleSaveNote}
+                disabled={isSaving || !textContent.trim()}
+                size="lg"
+                className="px-6"
+              >
+                {isSaving ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Saving...
+                  </>
+                ) : (
+                  <>
+                    <Save className="mr-2 h-4 w-4" />
+                    Save Note
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Alternative: Quick Paste Button */}
       <Card className="border-2 border-dashed border-primary/20 hover:border-primary/40 transition-colors">
-        <CardContent className="flex flex-col items-center justify-center py-16 px-8">
-          <div className="p-6 bg-primary/10 rounded-full mb-6">
-            <Clipboard className="h-12 w-12 text-primary" />
+        <CardContent className="flex flex-col items-center justify-center py-12 px-8">
+          <div className="p-4 bg-primary/10 rounded-full mb-4">
+            <Clipboard className="h-8 w-8 text-primary" />
           </div>
 
-          <h2 className="font-playfair text-2xl font-bold text-foreground mb-4 text-center">Paste Anything</h2>
+          <h3 className="font-playfair text-lg font-bold text-foreground mb-2 text-center">Quick Paste & Save</h3>
 
-          <p className="text-muted-foreground text-center mb-8 max-w-md leading-relaxed">
-            Copy any content to your clipboard, then click the button below. Our AI will automatically organize and
-            clean it for you.
+          <p className="text-muted-foreground text-center mb-6 max-w-md text-sm leading-relaxed">
+            Or paste and save directly without editing
           </p>
 
-          <Button onClick={handlePaste} disabled={isProcessing} size="lg" className="px-8 py-6 text-lg font-medium">
-            {isProcessing ? (
+          <Button 
+            onClick={async () => {
+              await handlePasteFromClipboard()
+              if (textContent) {
+                await handleSaveNote()
+              }
+            }} 
+            disabled={isProcessing || isSaving} 
+            variant="outline"
+            className="px-6"
+          >
+            {isProcessing || isSaving ? (
               <>
-                <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 Processing...
               </>
             ) : (
               <>
-                <Plus className="mr-2 h-5 w-5" />
-                Paste from Clipboard
+                <Plus className="mr-2 h-4 w-4" />
+                Paste & Save Instantly
               </>
             )}
           </Button>
-
-          <p className="text-sm text-muted-foreground mt-4">Supports text, links, code, and images</p>
         </CardContent>
       </Card>
 
